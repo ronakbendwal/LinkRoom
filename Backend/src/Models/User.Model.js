@@ -86,4 +86,65 @@ const UserSchema=new Schema({
   
 },{timestamps:true})
 
+//here we hash the password before save when password modify
+UserSchema.pre("save",async function(){
+
+if(!this.isModified("password")) return null;
+
+this.password=await bcrypt.hash(this.password,10)
+
+});
+//here we compare the input password with the user password
+UserSchema.method.IsPasswordCorrect=async function(password){
+
+return await bcrypt.password(password,this.password);
+
+}
+
+//here we generate acccess token
+UserSchema.method.GenerateAccessToken=function(){
+
+return jwt.sign(
+
+  {
+
+    userName:this.userName,
+
+    email:this.email,
+
+    _id:this._id,
+
+    fullName:this.fullName
+
+  },
+
+  process.env.ACCESS_TOKEN_SECRET,
+
+  {
+
+    expiresIn:"10d"
+
+  }
+)}
+
+//here we generate refresh token
+UserSchema.method.GenerateRefreshToken=function(){
+
+  return jwt.sing(
+
+    {
+
+      _id:this._id
+
+    },
+
+    process.env.REFRESH_TOKEN_SECRET,
+
+    {
+
+      expiresIn:"10d"
+    }
+    
+  )
+}
 export const USER=model("USER",UserSchema)
