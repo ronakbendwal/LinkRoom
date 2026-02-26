@@ -8,6 +8,7 @@ import {
 import jwt from 'jsonwebtoken'
  import USER from '../Models/User.Model.js';
 
+
  const GenerateAcessRefreshTokne=async(userId)=>{
   try{
     const user=await USER.findById(userId);
@@ -26,7 +27,7 @@ import jwt from 'jsonwebtoken'
 
     console.log("this is req.body", req.body)
 
-    const [
+    const {
       userName,
       phoneNumber,
       email,
@@ -34,20 +35,20 @@ import jwt from 'jsonwebtoken'
       password,
       bio,
       location,
-    ]=req.body;
+    }=req.body;
 
     const isAnyFieldEmpty=Object.values(req.body)
     .some((value)=>!value || value==="" || value===null || value===undefined)
 
-    if(!isAnyFieldEmpty){
+    if(isAnyFieldEmpty){
       throw new ApiError(400,"All Fields Are Required")
     }
 
-    const exitedUser=await USER.findOne({
-      $or:[{email:email.toLowerCase()},{userName:userName.toLowerCase()}]
+    const exitingUser=await USER.findOne({
+      $or:[{email:email?.toLowerCase()},{userName:userName?.toLowerCase()}]
     })
 
-    if(exitedUser){
+    if(exitingUser){
       throw new ApiError(400,"User Already Exist")
     }
 
@@ -68,10 +69,10 @@ import jwt from 'jsonwebtoken'
       throw new ApiError(500,"Server Error While Creating User")
     }
 
-    return res.status(200)
+    return res.status(201)
     .json(
       new ApiResponse(
-        200,
+        201,
         createdUserReferance,
         "User Sucessfully Created"
       )
@@ -93,11 +94,15 @@ import jwt from 'jsonwebtoken'
     }
 
     const userInfo=await USER.findOne({
-      $or:[{email:email},{userName:userName}]
+      $or:[{email:email?.toLowerCase()},{userName:userName?.toLowerCase()}]
     });
 
     if(!userInfo){
       throw new ApiError(404,"User Not Found");
+    }
+
+    if(!password){
+      throw new ApiError(400,"Password Required")
     }
 
     const passwordChecked=await userInfo.IsPasswordCorrect(password);
@@ -120,7 +125,7 @@ import jwt from 'jsonwebtoken'
     }
     return res.status(200)
     .cookie("refreshToken",refreshtoken,options)
-    .cookie("accesToken",accesstoken,options)
+    .cookie("accessToken",accesstoken,options)
     .json(
       new ApiResponse(
         200,
@@ -134,10 +139,10 @@ import jwt from 'jsonwebtoken'
 
     console.log("Inside Logout Controller");
 
-    await USER.findByIdAndUpate(
+    await USER.findByIdAndUpdate(
       req.user?._id,
-      {$set:{
-        refreshToken:undefined
+      {$unset:{
+        refreshToken:1
       }}
     )
 
@@ -148,8 +153,8 @@ import jwt from 'jsonwebtoken'
     }
 
     return res.status(200)
-    .cookie("refreshToken",options)
-    .cookie("accessToken",options)
+    .clearCookie("refreshToken",options)
+    .clearCookie("accessToken",options)
     .json(
       new ApiResponse(
         200,
@@ -163,9 +168,24 @@ import jwt from 'jsonwebtoken'
 
     console.log("Inside Delete Controller");
 
+    const user=await USER.findById(req.user?._id);
+
+    if(!user){
+      throw new ApiError(404,"User Not Found");
+    }
+
+    const currentavtar=user?.avtar;
+
+    if(currentavtar){
+
+      await CloudinaryDelete(currentavtar)
+
+    }
+
     const DeleteUser=await USER.findByIdAndDelete(req.user?._id);
 
     if(!DeleteUser){
+
       throw new ApiError(404,"User Not Found");
     }
     
@@ -175,23 +195,17 @@ import jwt from 'jsonwebtoken'
       sameSite:"lax"
     }
 
-    return res.status(200)
-    .cookie("refreshToken",options)
-    .cookie("accessToken",options)
-    .json(
-      new ApiResponse(
-        200,
-        {},
-        "User Sucessfully Deleted"
-      )
-    )
+    return res.status(204)
+    .clearCookie("refreshToken",options)
+    .clearCookie("accessToken",options)
+    .send()
   })
 
   const GetUser=AsyncHandle(async(req,res)=>{
 
     console.log("Inside get current user controller ");
 
-    const currentUser=await USER.findById(req.user?._id).select("-password -refreshTokne")
+    const currentUser=await USER.findById(req.user?._id).select("-password -refreshToken")
 
     if(!currentUser){
       throw new ApiError(404,"Unable To Find User");
@@ -207,14 +221,110 @@ import jwt from 'jsonwebtoken'
     )
   })
 
+  const UpdatePassword=AsyncHandle(async(req,res)=>{
 
+    console.log("Inside upate password controller ");
 
+    console.log("this is reqbody",req.body);
 
+    const {newPassword,password}=req.body;
+
+    if(!password){
+      throw new ApiError(400,"Old Password Are Missing")
+    }
+
+    if(!newPassword){
+      throw new ApiError(400,"New Password Are Missing");
+    }
+
+    if(newPassword===password){
+      throw new ApiError(409,"Use Different Password")
+    }
+
+    const user=await USER.findById(req.user?._id);
+    const VerifyPassword=await user.IsPasswordCorrect(password);
+
+    if(!VerifyPassword){
+      throw new ApiError(403,"Enter Correct Password")
+    }
+
+    user.password=newPassword;
+
+    await user.save();
+
+    const updatedUser = await USER.findById(user._id)
+    .select("-password -refreshToken");
+
+    return res.status(200)
+    .json(
+      new ApiResponse(
+        200,
+        updatedUser,
+        "User Password Sucessfully Updated"
+      )
+    )
+  })
+
+  const ProfileImage=AsyncHandle(async(req,res)=>{
+
+    console.log("Inside Profile Image Controller");
+
+    console.log("this if req.files",req.file);
+
+    if(!req.file?.path){
+      throw new ApiError(400,"Avtar File Missing")
+    }
+
+    const user=await USER.findById(req.user?._id);
+
+    if(!user){
+      throw new ApiError(404,"User Not Found");
+    }
+
+    const existedImage=user?.avtar;
+
+    if(existedImage){
+      const DeleteReferance=await CloudinaryDelete(existedImage);
+      if(DeleteReferance){
+        console.log("previous image sucessfully deleted")
+      }
+    }
+
+    const UploadNewImageReferance=await CloudinaryUpload(req.file?.path);
+
+    if(!UploadNewImageReferance?.url){
+      throw new ApiError(500,"Server Error While Upload File In Cloudinary");
+    }
+
+    const uploadedAvtarUser=await USER.findByIdAndUpdate(
+      user?._id,
+      {
+      $set:{
+        avtar:UploadNewImageReferance
+      }
+    },{new:true}).select("-password -refreshToken")
+
+    if(!uploadedAvtarUser){
+      throw new ApiError(500,"Server Error While Uploading File In DataBase")
+    }
+
+    return res.status(200)
+    .json(
+      new ApiResponse(
+        200,
+        uploadedAvtarUser,
+        "Avtar Image Sucessfully Uploaded"
+      )
+    )
+  })
+
+  
   export {
     SignUPUser,
     LoginUser,
     LogoutUser,
     DeleteUser,
-    GetUser
-
+    GetUser,
+    UpdatePassword,
+    ProfileImage,
   }
